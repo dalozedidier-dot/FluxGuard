@@ -24,7 +24,25 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      - name: Detect project directory
+        id: proj
+        shell: bash
+        run: |
+          if [ -f bareflux.py ]; then
+            echo "dir=." >> "$GITHUB_OUTPUT"
+          elif [ -f bareflux/bareflux.py ]; then
+            echo "dir=bareflux" >> "$GITHUB_OUTPUT"
+          else
+            echo "ERREUR: bareflux.py introuvable"
+            echo "Contenu repo:"
+            ls -la
+            echo "Contenu bareflux/:"
+            ls -la bareflux || true
+            exit 2
+          fi
+
       - name: Prep
+        working-directory: ${{ steps.proj.outputs.dir }}
         run: |
           python -V
           mkdir -p _ci_out
@@ -34,24 +52,29 @@ jobs:
           fi
 
       - name: Syntax check
+        working-directory: ${{ steps.proj.outputs.dir }}
         run: |
           python -m compileall -q .
 
       - name: NullTrace smoke
+        working-directory: ${{ steps.proj.outputs.dir }}
         env:
           SOURCE_DATE_EPOCH: "0"
         run: |
           python bareflux.py nulltrace --runs 10 --output-dir _ci_out/nulltrace
 
       - name: RiftLens smoke
+        working-directory: ${{ steps.proj.outputs.dir }}
         run: |
           python bareflux.py riftlens --input datasets/example.csv --output-dir _ci_out/riftlens
 
       - name: VoidMark smoke
+        working-directory: ${{ steps.proj.outputs.dir }}
         run: |
           python bareflux.py voidmark --input datasets/example.csv --runs 20 --output-dir _ci_out/voidmark
 
       - name: Full chain smoke
+        working-directory: ${{ steps.proj.outputs.dir }}
         run: |
           python bareflux.py all --shadow-prev datasets/example.csv --shadow-curr datasets/example.csv --output-dir _ci_out/full
 
@@ -59,5 +82,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: bareflux-ci-${{ matrix.python-version }}
-          path: _ci_out
+          path: ${{ steps.proj.outputs.dir }}/_ci_out
           if-no-files-found: error
