@@ -28,12 +28,13 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Debug env
+      - name: Debug runner state (avant crash)
         run: |
           free -h
           df -h
           top -b -n1 | head -20
           echo "ImageOS: $ImageOS"
+          echo "Runner version: $(cat /home/runner/.runner-version 2>/dev/null || echo 'unknown')"
           uname -a
 
       - name: Prep
@@ -46,7 +47,9 @@ jobs:
             printf "seed=ci\n" > .github/constraints.txt
           fi
 
-      - name: Smoke suite (retry)
+      - name: Smoke test (retry)
+        # Pour du simple monitoring (non bloquant), tu peux activer:
+        # continue-on-error: true
         uses: nick-fields/retry@v3
         with:
           timeout_minutes: 15
