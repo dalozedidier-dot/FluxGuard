@@ -3,10 +3,11 @@
 FluxGuard - CLI unique, modulaire, léger, déterministe, sans dépendances externes.
 
 Exemples:
-  python fluxguard.py nulltrace --runs 10
-  python fluxguard.py riftlens --input datasets/example.csv
-  python fluxguard.py voidmark --input datasets/example.csv
-  python fluxguard.py all --shadow-prev datasets/example.csv --shadow-curr datasets/example.csv
+  python fluxguard.py nulltrace --runs 200
+  python fluxguard.py riftlens --input datasets/example.csv --thresholds 0.1 0.3 0.5 0.7 0.9 0.95
+  python fluxguard.py voidmark --input datasets/example.csv --runs 1000 --noise 0.05
+  python fluxguard.py all --shadow-prev datasets/example.csv --shadow-curr datasets/example_drift.csv \
+      --rift-thresholds 0.1 0.3 0.5 0.7 0.9 0.95 --void-runs 500 --void-noise 0.02
 """
 
 from __future__ import annotations
@@ -54,26 +55,30 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_null = sub.add_parser("nulltrace", help="Mass-soak déterministe (NullTrace)")
-    p_null.add_argument("--runs", type=int, default=100)
+    p_null.add_argument("--runs", type=int, default=200)
     p_null.add_argument("--seed", type=int, default=0, help="Seed RNG (0 = dérivé des contraintes)")
     p_null.add_argument("--constraints", type=Path, default=Path(".github/constraints.txt"))
     p_null.add_argument("--output-dir", type=Path, default=Path("_ci_out/nulltrace"))
 
     p_rift = sub.add_parser("riftlens", help="Analyse CSV et graphe de cohérence (RiftLens)")
     p_rift.add_argument("--input", type=Path, required=True)
-    p_rift.add_argument("--thresholds", nargs="+", type=float, default=[0.25, 0.5, 0.7, 0.8])
+    p_rift.add_argument("--thresholds", nargs="+", type=float, default=[0.1, 0.3, 0.5, 0.7, 0.9, 0.95])
     p_rift.add_argument("--output-dir", type=Path, default=Path("_ci_out/riftlens"))
 
     p_void = sub.add_parser("voidmark", help="Vault immuable et stress test (VoidMark)")
     p_void.add_argument("--input", type=Path, required=True)
-    p_void.add_argument("--runs", type=int, default=200)
-    p_void.add_argument("--noise", type=float, default=0.05, help="Probabilité de flip de bit")
+    p_void.add_argument("--runs", type=int, default=500)
+    p_void.add_argument("--noise", type=float, default=0.02, help="Probabilité de flip de bit")
     p_void.add_argument("--seed", type=int, default=0)
     p_void.add_argument("--output-dir", type=Path, default=Path("_ci_out/voidmark"))
 
     p_all = sub.add_parser("all", help="Chaîne complète (séquentielle, auditables)")
     p_all.add_argument("--shadow-prev", type=Path, required=True)
     p_all.add_argument("--shadow-curr", type=Path, required=True)
+    p_all.add_argument("--rift-thresholds", nargs="+", type=float, default=[0.1, 0.3, 0.5, 0.7, 0.9, 0.95])
+    p_all.add_argument("--void-runs", type=int, default=500)
+    p_all.add_argument("--void-noise", type=float, default=0.02)
+    p_all.add_argument("--void-seed", type=int, default=0)
     p_all.add_argument("--output-dir", type=Path, default=Path("_ci_out/full"))
 
     return parser
@@ -135,6 +140,10 @@ def main() -> None:
                 shadow_prev=args.shadow_prev,
                 shadow_curr=args.shadow_curr,
                 output_dir=args.output_dir,
+                rift_thresholds=args.rift_thresholds,
+                void_runs=args.void_runs,
+                void_noise=args.void_noise,
+                void_seed=args.void_seed,
             )
             summary["full_chain"] = result
             print("Chaîne complète terminée")

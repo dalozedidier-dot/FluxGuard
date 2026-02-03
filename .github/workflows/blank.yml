@@ -1,12 +1,9 @@
-name: FluxGuard CI
+name: fluxguard-ci
 
 on:
   push:
   pull_request:
   workflow_dispatch:
-  schedule:
-    # Monitoring régulier (n'impacte pas le badge "push" si tu le filtres par event=push).
-    - cron: '17 3 * * *'
 
 jobs:
   smoke:
@@ -23,17 +20,13 @@ jobs:
       SOURCE_DATE_EPOCH: "0"
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Free disk space
-        # v1.3.1 pin SHA (supply-chain safe)
-        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be
+        uses: jlumbroso/free-disk-space@v1.3.1
         with:
           tool-cache: false
           android: false
@@ -43,27 +36,7 @@ jobs:
           docker-images: false
           swap-storage: false
 
-      - name: Debug avant
-        run: |
-          df -h
-          free -h
-          echo "ImageOS: $ImageOS"
-          echo "Runner version: $(cat /home/runner/.runner-version 2>/dev/null || echo 'unknown')"
-
-      - name: Prep
-        working-directory: fluxguard
-        run: |
-          python -V
-          mkdir -p _ci_out
-          mkdir -p .github
-          if [ ! -f .github/constraints.txt ]; then
-            printf "seed=ci\n" > .github/constraints.txt
-          fi
-
       - name: Smoke test retry
-        # En schedule: monitoring non-bloquant.
-        # En push/PR: échec = rouge (badge réaliste).
-        continue-on-error: ${{ github.event_name == 'schedule' }}
         uses: nick-fields/retry@v3
         with:
           timeout_minutes: 15
@@ -72,21 +45,12 @@ jobs:
           command: |
             set -euo pipefail
             cd fluxguard
-            rm -rf _ci_out
-            mkdir -p _ci_out
-
+            mkdir -p _ci_out .github
+            if [ ! -f .github/constraints.txt ]; then
+              printf "seed=ci\n" > .github/constraints.txt
+            fi
             python -m compileall -q .
-
-            python fluxguard.py nulltrace --runs 10 --output-dir _ci_out/nulltrace
-            python fluxguard.py riftlens --input datasets/example.csv --output-dir _ci_out/riftlens
-            python fluxguard.py voidmark --input datasets/example.csv --runs 20 --output-dir _ci_out/voidmark
-            python fluxguard.py all --shadow-prev datasets/example.csv --shadow-curr datasets/example.csv --output-dir _ci_out/full
-
-      - name: Debug après
-        if: always()
-        run: |
-          df -h
-          free -h
+            python fluxguard.py all --shadow-prev datasets/example.csv --shadow-curr datasets/example_drift.csv --output-dir _ci_out/full
 
       - name: Upload artifacts
         if: always()
