@@ -1,0 +1,63 @@
+name: bareflux-ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Prep
+        run: |
+          python -V
+          mkdir -p _ci_out
+          mkdir -p .github
+          if [ ! -f .github/constraints.txt ]; then
+            printf "seed=ci\n" > .github/constraints.txt
+          fi
+
+      - name: Syntax check
+        run: |
+          python -m compileall -q .
+
+      - name: NullTrace smoke
+        env:
+          SOURCE_DATE_EPOCH: "0"
+        run: |
+          python bareflux.py nulltrace --runs 10 --output-dir _ci_out/nulltrace
+
+      - name: RiftLens smoke
+        run: |
+          python bareflux.py riftlens --input datasets/example.csv --output-dir _ci_out/riftlens
+
+      - name: VoidMark smoke
+        run: |
+          python bareflux.py voidmark --input datasets/example.csv --runs 20 --output-dir _ci_out/voidmark
+
+      - name: Full chain smoke
+        run: |
+          python bareflux.py all --shadow-prev datasets/example.csv --shadow-curr datasets/example.csv --output-dir _ci_out/full
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bareflux-ci-${{ matrix.python-version }}
+          path: _ci_out
+          if-no-files-found: error
