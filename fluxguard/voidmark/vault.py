@@ -60,7 +60,6 @@ def compute_stats(values: List[float]) -> Dict[str, Any]:
     v = sum((x - m) ** 2 for x in values) / len(values)
 
     # Stabilisation cross-version Python: arrondi contrôlé à l'écriture.
-    # Suffisant pour éviter des divergences à ~1e-18 entre 3.11/3.12.
     m = round(m, 16)
     v = round(v, 16)
 

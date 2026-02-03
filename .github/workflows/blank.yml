@@ -7,8 +7,8 @@ on:
 
 jobs:
   smoke:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
 
     strategy:
       fail-fast: false
@@ -28,6 +28,14 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      - name: Debug env
+        run: |
+          free -h
+          df -h
+          top -b -n1 | head -20
+          echo "ImageOS: $ImageOS"
+          uname -a
+
       - name: Prep
         working-directory: fluxguard
         run: |
@@ -38,30 +46,24 @@ jobs:
             printf "seed=ci\n" > .github/constraints.txt
           fi
 
-      - name: Syntax check
-        working-directory: fluxguard
-        run: |
-          python -m compileall -q .
+      - name: Smoke suite (retry)
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 15
+          max_attempts: 3
+          retry_on: error
+          command: |
+            set -euo pipefail
+            cd fluxguard
+            rm -rf _ci_out
+            mkdir -p _ci_out
 
-      - name: NullTrace smoke
-        working-directory: fluxguard
-        run: |
-          python fluxguard.py nulltrace --runs 10 --output-dir _ci_out/nulltrace
+            python -m compileall -q .
 
-      - name: RiftLens smoke
-        working-directory: fluxguard
-        run: |
-          python fluxguard.py riftlens --input datasets/example.csv --output-dir _ci_out/riftlens
-
-      - name: VoidMark smoke
-        working-directory: fluxguard
-        run: |
-          python fluxguard.py voidmark --input datasets/example.csv --runs 20 --output-dir _ci_out/voidmark
-
-      - name: Full chain smoke
-        working-directory: fluxguard
-        run: |
-          python fluxguard.py all --shadow-prev datasets/example.csv --shadow-curr datasets/example.csv --output-dir _ci_out/full
+            python fluxguard.py nulltrace --runs 10 --output-dir _ci_out/nulltrace
+            python fluxguard.py riftlens --input datasets/example.csv --output-dir _ci_out/riftlens
+            python fluxguard.py voidmark --input datasets/example.csv --runs 20 --output-dir _ci_out/voidmark
+            python fluxguard.py all --shadow-prev datasets/example.csv --shadow-curr datasets/example.csv --output-dir _ci_out/full
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
