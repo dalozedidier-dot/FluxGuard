@@ -1,5 +1,5 @@
 # Regles simples: format "name: expression"
 # Variables disponibles:
 # count, missing_rate, mean_<col>, std_<col>, min_<col>, max_<col>, median_<col>, mad_<col>
-mean_b_high: mean_b > 2.2
+mean_b_high: mean_b > 2.0
 missing_ok: missing_rate < 0.01

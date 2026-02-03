@@ -20,10 +20,10 @@ Objectif: conserver la philosophie deterministe et auditee, tout en ajoutant une
 ## Execution (local)
 ```bash
 cd fluxguard
-python fluxguard.py all --shadow-prev datasets/example.csv --shadow-curr datasets/example_drift.csv --output-dir _ci_out/full
+python fluxguard.py all --shadow-prev datasets/example.csv --shadow-curr datasets/example_drift.csv --output-dir _ci_out/full --version-db _ci_out/full/voidmark_versions.json
 python fluxguard.py riftlens --input datasets/example_drift.csv --local-ruptures --output-dir _ci_out/riftlens
 python fluxguard.py riftlens --input datasets/example_drift.csv --mode causal --max-lag 3 --output-dir _ci_out/riftlens_causal
-python fluxguard.py voidmark --input datasets/example_drift.csv --baseline-mark _ci_out/full/step2_voidmark/vault/voidmark_mark.json --output-dir _ci_out/voidmark
+python fluxguard.py voidmark --input datasets/example_drift.csv --baseline-mark _ci_out/full/step2_voidmark/vault/voidmark_mark.json --output-dir _ci_out/voidmark --version-db _ci_out/voidmark_versions.json
 python fluxguard.py nulltrace --runs 50 --data-aware --input datasets/example_drift.csv --rules ../rules.yml --output-dir _ci_out/nulltrace
 ```
 

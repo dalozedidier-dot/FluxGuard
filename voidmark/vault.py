@@ -8,6 +8,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 
+def relpath(p: Path, base: Path) -> str:
+    try:
+        return p.resolve().relative_to(base.resolve()).as_posix()
+    except Exception:
+        import os
+        return os.path.relpath(str(p), str(base)).replace("\\", "/")
+
+
 def sha256_bytes(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
 
@@ -322,8 +330,10 @@ def voidmark_run_stress_test(
     if version_db is not None:
         entry = {
             "base_sha256": base_hash,
-            "mark_path": str(mark_path),
-            "data_fingerprint_source_csv": str(fingerprint_csv_path) if fingerprint_csv_path else None,
+            "mark_relpath": relpath(mark_path, version_db.parent),
+            "data_fingerprint_source_csv_relpath": (
+                relpath(fingerprint_csv_path, version_db.parent) if fingerprint_csv_path else None
+            ),
             "flag_drift": bool(mark.get("drift_signals", {}).get("flag_drift", False)),
         }
         update_version_history(version_db, entry)

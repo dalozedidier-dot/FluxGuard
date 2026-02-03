@@ -78,7 +78,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_void.add_argument("--seed", type=int, default=0)
     p_void.add_argument("--output-dir", type=Path, default=Path("_ci_out/voidmark"))
     p_void.add_argument("--baseline-mark", type=Path, default=None, help="Baseline voidmark_mark.json pour drift")
-    p_void.add_argument("--version-db", type=Path, default=Path("_ci_out/voidmark_versions.json"))
+    p_void.add_argument("--version-db", type=Path, default=None)
 
     p_all = sub.add_parser("all", help="Chaine complete (sequentielle, auditable)")
     p_all.add_argument("--shadow-prev", type=Path, required=True)
@@ -94,7 +94,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_all.add_argument("--void-noise", type=float, default=0.02)
     p_all.add_argument("--void-seed", type=int, default=0)
     p_all.add_argument("--void-baseline-mark", type=Path, default=None)
-    p_all.add_argument("--version-db", type=Path, default=Path("_ci_out/voidmark_versions.json"))
+    p_all.add_argument("--version-db", type=Path, default=None)
     p_all.add_argument("--output-dir", type=Path, default=Path("_ci_out/full"))
 
     return parser
