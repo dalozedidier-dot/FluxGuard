@@ -1,9 +1,12 @@
-name: fluxguard-ci
+name: FluxGuard CI
 
 on:
   push:
   pull_request:
   workflow_dispatch:
+  schedule:
+    # Monitoring régulier (n'impacte pas le badge "push" si tu le filtres par event=push).
+    - cron: '17 3 * * *'
 
 jobs:
   smoke:
@@ -29,7 +32,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Free disk space
-        uses: jlumbroso/free-disk-space@v1.3.1
+        # v1.3.1 pin SHA (supply-chain safe)
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be
         with:
           tool-cache: false
           android: false
@@ -57,7 +61,9 @@ jobs:
           fi
 
       - name: Smoke test retry
-        continue-on-error: true  # temporaire: met à false pour rebloquer les PRs
+        # En schedule: monitoring non-bloquant.
+        # En push/PR: échec = rouge (badge réaliste).
+        continue-on-error: ${{ github.event_name == 'schedule' }}
         uses: nick-fields/retry@v3
         with:
           timeout_minutes: 15
