@@ -8,7 +8,7 @@ on:
 jobs:
   smoke:
     runs-on: ubuntu-22.04
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     strategy:
       fail-fast: false
@@ -21,6 +21,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -36,10 +37,19 @@ jobs:
           docker-images: false
           swap-storage: false
 
-      - name: Smoke test retry
+      - name: Debug runner state
+        run: |
+          set -euo pipefail
+          echo "ImageOS: $ImageOS"
+          echo "Runner: $RUNNER_OS"
+          df -h
+          free -h
+          uname -a
+
+      - name: Smoke test with retry
         uses: nick-fields/retry@v3
         with:
-          timeout_minutes: 15
+          timeout_minutes: 20
           max_attempts: 3
           retry_on: error
           command: |

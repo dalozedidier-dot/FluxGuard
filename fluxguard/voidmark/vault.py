@@ -56,19 +56,22 @@ def shannon_entropy_bits(data: bytes) -> float:
 def compute_stats(values: List[float]) -> Dict[str, Any]:
     if not values:
         return {"count": 0}
-    m = sum(values) / len(values)
-    v = sum((x - m) ** 2 for x in values) / len(values)
 
-    # Stabilisation cross-version Python: arrondi contrôlé à l'écriture.
-    m = round(m, 16)
-    v = round(v, 16)
+    # Agrégats stables cross-version Python:
+    # math.fsum réduit les écarts d'arrondi entre interprètes.
+    m = math.fsum(values) / len(values)
+    v = math.fsum((x - m) ** 2 for x in values) / len(values)
+
+    # Quantification volontaire: évite les micro-écarts à ~1e-15.
+    m = round(m, 12)
+    v = round(v, 12)
 
     return {
         "count": len(values),
         "mean_entropy_bits": m,
         "var_entropy_bits": v,
-        "min_entropy_bits": round(min(values), 16),
-        "max_entropy_bits": round(max(values), 16),
+        "min_entropy_bits": round(min(values), 12),
+        "max_entropy_bits": round(max(values), 12),
     }
 
 
