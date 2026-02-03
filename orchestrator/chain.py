@@ -48,10 +48,6 @@ def run_full_chain(shadow_prev: Path, shadow_curr: Path, output_dir: Path) -> Di
         seed=0,
     )
 
-    chain = {
-        "inputs": str(step0 / "inputs_report.json"),
-        "riftlens": rift,
-        "voidmark": void,
-    }
+    chain = {"inputs": str(step0 / "inputs_report.json"), "riftlens": rift, "voidmark": void}
     write_json(output_dir / "full_chain_report.json", chain)
     return chain
