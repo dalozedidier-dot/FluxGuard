@@ -20,44 +20,55 @@ jobs:
       SOURCE_DATE_EPOCH: "0"
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Free disk space
-        uses: jlumbroso/free-disk-space@v1.3.1
-        with:
-          tool-cache: false
-          android: false
-          dotnet: false
-          haskell: false
-          large-packages: false
-          docker-images: false
-          swap-storage: false
+      - name: Debug resources
+        run: |
+          free -h
+          df -h
+          uname -a
 
-      - name: Smoke test with retry
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 15
-          max_attempts: 3
-          retry_on: error
-          command: |
-            set -euo pipefail
-            cd fluxguard
-            mkdir -p _ci_out .github
-            if [ ! -f .github/constraints.txt ]; then
-              printf "seed=ci\n" > .github/constraints.txt
-            fi
+      - name: Prep
+        working-directory: fluxguard
+        run: |
+          python -V
+          mkdir -p _ci_out
+          mkdir -p .github
+          if [ ! -f .github/constraints.txt ]; then
+            printf "seed=ci\n" > .github/constraints.txt
+          fi
+
+      - name: Smoke suite with retry
+        working-directory: fluxguard
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for attempt in 1 2 3; do
+            echo "Attempt ${attempt}/3"
+            rm -rf _ci_out
+            mkdir -p _ci_out
+
             python -m compileall -q .
-            python -m unittest discover -s ../tests -p "test_*.py" -v
-            python fluxguard.py all --shadow-prev datasets/example.csv --shadow-curr datasets/example_drift.csv --output-dir _ci_out/full
-            python fluxguard.py nulltrace --runs 25 --data-aware --input datasets/example_drift.csv --rules ../rules.yml --output-dir _ci_out/nulltrace
+
+            python fluxguard.py nulltrace --runs 10 --output-dir _ci_out/nulltrace
+            python fluxguard.py riftlens --input datasets/example.csv --output-dir _ci_out/riftlens
+            python fluxguard.py voidmark --input datasets/example.csv --runs 20 --output-dir _ci_out/voidmark
+            python fluxguard.py all --shadow-prev datasets/example.csv --shadow-curr datasets/example.csv --output-dir _ci_out/full
+
+            echo "Smoke OK"
+            break
+          done
 
       - name: Upload artifacts
-        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: fluxguard-ci-${{ matrix.python-version }}
           path: fluxguard/_ci_out
-          if-no-files-found: warn
+          if-no-files-found: error

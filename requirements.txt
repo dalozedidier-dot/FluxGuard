@@ -1,6 +1,1 @@
-# FluxGuard fonctionne sans dependances externes (stdlib uniquement).
-# Optionnel (si tu veux les modes avances):
-# ruptures
-# tigramite
-# great_expectations
-# dvc
+# Pas de dépendances externes. Python standard library uniquement.
