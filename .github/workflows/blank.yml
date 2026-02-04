@@ -9,28 +9,28 @@ jobs:
   smoke:
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.experimental }}
-    timeout-minutes: 45                     # Augmenté : smoke + runs 10/20 + venv + deps peut dépasser 20 min
+    timeout-minutes: 45
 
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-22.04
+          - os: ubuntu-24.04
             python-version: "3.11"
             experimental: false
-          - os: ubuntu-22.04
+          - os: ubuntu-24.04
             python-version: "3.12"
             experimental: false
-          - os: ubuntu-24.04
+          - os: ubuntu-22.04
             python-version: "3.11"
             experimental: true
-          - os: ubuntu-24.04
+          - os: ubuntu-22.04
             python-version: "3.12"
             experimental: true
 
     env:
       PYTHONHASHSEED: "0"
-      # SOURCE_DATE_EPOCH: "0"   # Décommenter si vous voulez timestamps 1970 pour tests déterministes
+      # SOURCE_DATE_EPOCH: "0"
 
     steps:
       - name: Checkout
@@ -44,7 +44,7 @@ jobs:
           cache-dependency-path: |
             fluxguard/requirements*.txt
             fluxguard/pyproject.toml
-            fluxguard/setup.py           # si présent
+            fluxguard/setup.py
 
       - name: Show system resources
         run: |
@@ -55,21 +55,32 @@ jobs:
 
       - name: Prepare virtual environment
         working-directory: fluxguard
+        shell: bash
         run: |
+          set -euo pipefail
           python -m venv .venv
           source .venv/bin/activate
           python -m pip install --upgrade pip setuptools wheel
-          # Installation conditionnelle et silencieuse sur absence de fichier
-          pip install -r requirements.txt      || true
-          pip install -r requirements-dev.txt  || true
-          pip install -r requirements-optional.txt || true
+
+          echo "pip cache:"
+          python -m pip cache dir
+          python -m pip cache info || true
+
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          if [ -f requirements-optional.txt ]; then pip install -r requirements-optional.txt; fi
+
           pip list --format=freeze
 
       - name: Prepare directories & constraints
         working-directory: fluxguard
+        shell: bash
         run: |
-          mkdir -p _ci_out .github
-          [ -f .github/constraints.txt ] || echo "seed=ci" > .github/constraints.txt
+          set -euo pipefail
+          mkdir -p _ci_out _ci
+          if [ ! -f _ci/constraints.txt ]; then
+            printf "seed=ci\n" > _ci/constraints.txt
+          fi
 
       - name: Smoke tests with retry
         working-directory: fluxguard
@@ -79,30 +90,28 @@ jobs:
           source .venv/bin/activate
 
           success=false
-          for attempt in {1..3}; do
+          for attempt in 1 2 3; do
             echo ""
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo " Attempt ${attempt}/3  ─────────────────"
+            echo " Attempt ${attempt}/3"
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
             rm -rf _ci_out
             mkdir -p _ci_out
 
-            # Compileall non bloquant
             python -m compileall -q . 2>/dev/null || echo "compileall had warnings"
 
-            # Chaque commande avec son propre status
             echo "→ nulltrace"
-            python fluxguard.py nulltrace --runs 10 --output-dir _ci_out/nulltrace || { echo "nulltrace failed"; continue 2; }
+            python fluxguard.py nulltrace --runs 10 --output-dir _ci_out/nulltrace || { echo "nulltrace failed"; continue; }
 
             echo "→ riftlens"
-            python fluxguard.py riftlens --input datasets/example.csv --output-dir _ci_out/riftlens || { echo "riftlens failed"; continue 2; }
+            python fluxguard.py riftlens --input datasets/example.csv --output-dir _ci_out/riftlens || { echo "riftlens failed"; continue; }
 
             echo "→ voidmark"
-            python fluxguard.py voidmark --input datasets/example.csv --runs 20 --output-dir _ci_out/voidmark || { echo "voidmark failed"; continue 2; }
+            python fluxguard.py voidmark --input datasets/example.csv --runs 20 --output-dir _ci_out/voidmark || { echo "voidmark failed"; continue; }
 
             echo "→ all (shadow)"
-            python fluxguard.py all --shadow-prev datasets/example.csv --shadow-curr datasets/example.csv --output-dir _ci_out/full || { echo "all command failed"; continue 2; }
+            python fluxguard.py all --shadow-prev datasets/example.csv --shadow-curr datasets/example.csv --output-dir _ci_out/full || { echo "all failed"; continue; }
 
             echo "All smoke commands succeeded"
             success=true
@@ -117,6 +126,7 @@ jobs:
       - name: Extra debug information on failure
         if: failure()
         working-directory: fluxguard
+        shell: bash
         run: |
           source .venv/bin/activate || true
           echo "OS release:"
