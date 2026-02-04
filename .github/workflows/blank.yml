@@ -7,114 +7,130 @@ on:
 
 jobs:
   smoke:
-    runs-on: ubuntu-22.04
-    timeout-minutes: 45               # Augmenté : runs=10/20 + compileall + potentiels deps lourds (ruptures?) peuvent dépasser 20 min
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.experimental }}
+    timeout-minutes: 45                     # Augmenté : smoke + runs 10/20 + venv + deps peut dépasser 20 min
 
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        include:
+          - os: ubuntu-22.04
+            python-version: "3.11"
+            experimental: false
+          - os: ubuntu-22.04
+            python-version: "3.12"
+            experimental: false
+          - os: ubuntu-24.04
+            python-version: "3.11"
+            experimental: true
+          - os: ubuntu-24.04
+            python-version: "3.12"
+            experimental: true
 
     env:
       PYTHONHASHSEED: "0"
-      SOURCE_DATE_EPOCH: "0"
+      # SOURCE_DATE_EPOCH: "0"   # Décommenter si vous voulez timestamps 1970 pour tests déterministes
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-          cache: 'pip'                           # Réduit drastiquement le temps d'install deps
+          cache: 'pip'
+          cache-dependency-path: |
+            fluxguard/requirements*.txt
+            fluxguard/pyproject.toml
+            fluxguard/setup.py           # si présent
 
-      - name: System & env debug (resources + versions)
+      - name: Show system resources
         run: |
           free -h
           df -h
           uname -a
           lsb_release -a || cat /etc/os-release
-          python --version
-          pip --version
-          pip list --format=freeze
 
-      - name: Create & activate virtual environment
+      - name: Prepare virtual environment
         working-directory: fluxguard
         run: |
           python -m venv .venv
           source .venv/bin/activate
           python -m pip install --upgrade pip setuptools wheel
-
-      - name: Install dependencies (fluxguard + optional)
-        working-directory: fluxguard
-        run: |
-          source .venv/bin/activate
-          # Root-level si deps globales
-          pip install -r ../requirements.txt || true
-          # Fluxguard-local
-          pip install -r requirements.txt || true
-          pip install -r requirements-optional.txt || true   # ruptures, numpy, pandas ?
+          # Installation conditionnelle et silencieuse sur absence de fichier
+          pip install -r requirements.txt      || true
+          pip install -r requirements-dev.txt  || true
+          pip install -r requirements-optional.txt || true
           pip list --format=freeze
 
-      - name: Prepare output & constraints
+      - name: Prepare directories & constraints
         working-directory: fluxguard
         run: |
           mkdir -p _ci_out .github
-          if [ ! -f .github/constraints.txt ]; then
-            echo "seed=ci" > .github/constraints.txt
-          fi
+          [ -f .github/constraints.txt ] || echo "seed=ci" > .github/constraints.txt
 
-      - name: Run smoke suite with retry & granular logging
+      - name: Smoke tests with retry
         working-directory: fluxguard
         shell: bash
         run: |
           set -euo pipefail
           source .venv/bin/activate
 
+          success=false
           for attempt in {1..3}; do
             echo ""
-            echo "===== Attempt ${attempt}/3 ====="
-            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo " Attempt ${attempt}/3  ─────────────────"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
             rm -rf _ci_out
             mkdir -p _ci_out
 
-            # Compile check (non-blocking si warning)
-            python -m compileall -q . || echo "Compileall had warnings (non-fatal)"
+            # Compileall non bloquant
+            python -m compileall -q . 2>/dev/null || echo "compileall had warnings"
 
-            # Chaque commande isolée → meilleur diagnostic d'échec
+            # Chaque commande avec son propre status
             echo "→ nulltrace"
-            python fluxguard.py nulltrace --runs 10 --output-dir _ci_out/nulltrace || { echo "nulltrace failed"; continue; }
+            python fluxguard.py nulltrace --runs 10 --output-dir _ci_out/nulltrace || { echo "nulltrace failed"; continue 2; }
 
             echo "→ riftlens"
-            python fluxguard.py riftlens --input datasets/example.csv --output-dir _ci_out/riftlens || { echo "riftlens failed"; continue; }
+            python fluxguard.py riftlens --input datasets/example.csv --output-dir _ci_out/riftlens || { echo "riftlens failed"; continue 2; }
 
             echo "→ voidmark"
-            python fluxguard.py voidmark --input datasets/example.csv --runs 20 --output-dir _ci_out/voidmark || { echo "voidmark failed"; continue; }
+            python fluxguard.py voidmark --input datasets/example.csv --runs 20 --output-dir _ci_out/voidmark || { echo "voidmark failed"; continue 2; }
 
             echo "→ all (shadow)"
-            python fluxguard.py all --shadow-prev datasets/example.csv --shadow-curr datasets/example.csv --output-dir _ci_out/full || { echo "full all failed"; continue; }
+            python fluxguard.py all --shadow-prev datasets/example.csv --shadow-curr datasets/example.csv --output-dir _ci_out/full || { echo "all command failed"; continue 2; }
 
-            echo "Smoke suite succeeded on attempt ${attempt}"
-            exit 0
+            echo "All smoke commands succeeded"
+            success=true
+            break
           done
 
-          echo "All 3 attempts failed → job failed"
-          exit 1
+          if [ "$success" != "true" ]; then
+            echo "Smoke suite failed after 3 attempts"
+            exit 1
+          fi
 
-      - name: Upload artifacts (always, pour debug même en échec)
+      - name: Extra debug information on failure
+        if: failure()
+        working-directory: fluxguard
+        run: |
+          source .venv/bin/activate || true
+          echo "OS release:"
+          cat /etc/os-release 2>/dev/null || lsb_release -a
+          echo "Python & pip:"
+          python --version
+          pip --version
+          echo "Installed packages:"
+          pip list --format=freeze
+
+      - name: Upload artifacts (always)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fluxguard-smoke-${{ matrix.python-version }}-attempt${{ github.run_attempt }}
+          name: fluxguard-smoke-${{ matrix.os }}-py${{ matrix.python-version }}-${{ github.run_attempt }}
           path: fluxguard/_ci_out
           if-no-files-found: warn
-
-  # Optionnel : monitoring futur sur 24.04 (décommentez quand prêt)
-  # smoke-24:
-  #   runs-on: ubuntu-24.04
-  #   continue-on-error: true
-  #   timeout-minutes: 45
-  #   strategy: { matrix: { python-version: ["3.11", "3.12"] } }
-  #   steps: ... (copiez les mêmes steps ci-dessus)
