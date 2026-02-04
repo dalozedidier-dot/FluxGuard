@@ -1,31 +1,38 @@
-FluxGuard Audit Postprocess Bundle v2
+FluxGuard CI Bundle v3
 
 But
-- Corriger les anomalies d'audit dans les artefacts FluxGuard, sans dépendre d'une modification précise du code interne.
-- Fixer generated_at_utc (plus de 1970) et propager une "seed effective" unique dans le summary.
-- Optionnel: quantifier les floats (par défaut 12 décimales) pour neutraliser les micro-écarts inter-OS/Python.
+1) Immédiat: forcer ubuntu-22.04 partout pour supprimer les échecs liés à ubuntu-latest (Ubuntu 24.04).
+2) Activer cache pip sur actions/setup-python@v5.
+3) Fournir un workflow "smoke-tests" prêt, avec virtualenv, et un job de monitoring Ubuntu 24.04 en continue-on-error.
 
-Principe
-- On post-traite un dossier _ci_out (ou full/) après génération, puis on ré-écrit:
-  - fluxguard_summary.json (et éventuellement voidmark_mark.json si demandé)
+Contenu
+- scripts/patch_fluxguard_ci_v3.py
+  - Remplace runs-on: ubuntu-latest par runs-on: ubuntu-22.04 dans .github/workflows/*.yml|*.yaml
+  - Ajoute cache: 'pip' dans les steps actions/setup-python@v5 quand absent
+  - Option --rename-blank: renomme blank.yml en smoke-tests.yml (sans modifier son contenu)
+  - Option --install-smoke-template: écrit un workflow complet smoke-tests.yml si absent
+  - Option --replace-blank-with-template: remplace blank.yml par le template (en sauvegardant un .bak)
 
-Scripts
-- scripts/fluxguard_postprocess_audit.py
-  Usage:
-    python scripts/fluxguard_postprocess_audit.py _ci_out/full
-    python scripts/fluxguard_postprocess_audit.py _ci_out/full --write-mark
-    python scripts/fluxguard_postprocess_audit.py _ci_out --recursive
+- workflows/smoke-tests.yml.template
+  - Job smoke sur ubuntu-22.04, matrix Python 3.11 et 3.12
+  - Virtualenv obligatoire
+  - Cache pip activé
+  - Debug automatique en cas d'échec
+  - Job smoke-future sur ubuntu-24.04 en continue-on-error, même logique venv
 
-  Ce que ça fait:
-  - Remplace generated_at_utc par un vrai UTC ISO (sans microsecondes).
-  - Cherche voidmark_mark.json et récupère la seed.
-  - Injecte dans fluxguard_summary.json:
-      full_chain.voidmark.seed_effective = <seed lue dans mark>
-  - Optionnel: quantifie les floats du summary et du mark.
+Usage typique
+A) Stabilisation immédiate sans toucher à la logique des tests
+   python scripts/patch_fluxguard_ci_v3.py
 
-Snippets
-- snippets/postprocess_step.yml : step GitHub Actions à insérer après la génération.
+B) Renommer blank.yml pour clarté
+   python scripts/patch_fluxguard_ci_v3.py --rename-blank
 
-Notes
-- Ce bundle n'essaie pas de recalculer des hashes "manifest" car FluxGuard ne semble pas les référencer
-  dans fluxguard_summary.json. Si vous avez un manifest externe, il faudra le mettre à jour après postprocess.
+C) Installer un workflow smoke-tests.yml prêt à l'emploi (sans modifier les autres)
+   python scripts/patch_fluxguard_ci_v3.py --install-smoke-template
+
+D) Remplacer blank.yml par le template (solution directe si blank.yml est la CI principale)
+   python scripts/patch_fluxguard_ci_v3.py --replace-blank-with-template
+
+Après patch
+- Vérifier: git diff
+- Commit et push
