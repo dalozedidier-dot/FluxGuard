@@ -1,32 +1,31 @@
-FluxGuard CI Stabilization Bundle v2
+FluxGuard Audit Postprocess Bundle v2
 
-Objectif
-- Stabiliser immédiatement la CI en pinant ubuntu-22.04 et en activant le cache pip.
-- Fournir un workflow exemple compatible Ubuntu 24.04 (ubuntu-latest) via virtualenv, en continue-on-error.
-- Ajouter un step de debug conditionnel en cas d'échec (exemple fourni).
+But
+- Corriger les anomalies d'audit dans les artefacts FluxGuard, sans dépendre d'une modification précise du code interne.
+- Fixer generated_at_utc (plus de 1970) et propager une "seed effective" unique dans le summary.
+- Optionnel: quantifier les floats (par défaut 12 décimales) pour neutraliser les micro-écarts inter-OS/Python.
 
-Contenu
-- scripts/patch_fluxguard_ci_v2.py
-  - Remplace runs-on: ubuntu-latest par runs-on: ubuntu-22.04 dans .github/workflows/*.yml|*.yaml
-  - Ajoute cache: 'pip' dans les steps actions/setup-python@v5 quand absent
-  - Option --rename-blank pour renommer blank.yml -> smoke-tests.yml
-- workflows/smoke-tests.yml.example
-  - Job principal sur ubuntu-22.04 (stable)
-  - Job monitoring sur ubuntu-24.04 (continue-on-error) avec virtualenv
-  - Step Debug env (on failure)
+Principe
+- On post-traite un dossier _ci_out (ou full/) après génération, puis on ré-écrit:
+  - fluxguard_summary.json (et éventuellement voidmark_mark.json si demandé)
 
-Usage
-1) Dézipper à la racine du repo FluxGuard
-2) Lancer:
-   python scripts/patch_fluxguard_ci_v2.py
-   ou:
-   python scripts/patch_fluxguard_ci_v2.py --rename-blank
+Scripts
+- scripts/fluxguard_postprocess_audit.py
+  Usage:
+    python scripts/fluxguard_postprocess_audit.py _ci_out/full
+    python scripts/fluxguard_postprocess_audit.py _ci_out/full --write-mark
+    python scripts/fluxguard_postprocess_audit.py _ci_out --recursive
 
-3) Vérifier:
-   git diff
+  Ce que ça fait:
+  - Remplace generated_at_utc par un vrai UTC ISO (sans microsecondes).
+  - Cherche voidmark_mark.json et récupère la seed.
+  - Injecte dans fluxguard_summary.json:
+      full_chain.voidmark.seed_effective = <seed lue dans mark>
+  - Optionnel: quantifie les floats du summary et du mark.
 
-4) Commit et push
+Snippets
+- snippets/postprocess_step.yml : step GitHub Actions à insérer après la génération.
 
 Notes
-- Le patcher est volontairement conservateur: il modifie uniquement runs-on et le cache pip.
-- Pour une migration ubuntu-24.04 propre, prendre le workflow exemple et l'adapter au repo (venv et install).
+- Ce bundle n'essaie pas de recalculer des hashes "manifest" car FluxGuard ne semble pas les référencer
+  dans fluxguard_summary.json. Si vous avez un manifest externe, il faudra le mettre à jour après postprocess.

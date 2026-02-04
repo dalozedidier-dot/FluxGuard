@@ -1,0 +1,4 @@
+# Step to add AFTER you generate _ci_out in your GitHub Actions workflow
+- name: Postprocess FluxGuard audit (timestamp + seed propagation)
+  run: |
+    python scripts/fluxguard_postprocess_audit.py _ci_out --recursive --write-mark --quantize
