@@ -1,0 +1,84 @@
+name: smoke-tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Create virtual environment
+        run: python -m venv .venv
+
+      - name: Install dependencies
+        run: |
+          source .venv/bin/activate
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -r requirements.txt
+
+      - name: Run smoke tests
+        run: |
+          source .venv/bin/activate
+          python -m pytest -q
+
+      - name: Debug on failure
+        if: failure()
+        run: |
+          source .venv/bin/activate || true
+          lsb_release -a || cat /etc/os-release
+          python --version
+          pip --version
+          pip list --format=freeze
+
+  smoke-future:
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Create virtual environment
+        run: python -m venv .venv
+
+      - name: Install dependencies
+        run: |
+          source .venv/bin/activate
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -r requirements.txt
+
+      - name: Run smoke tests
+        run: |
+          source .venv/bin/activate
+          python -m pytest -q
+
+      - name: Debug on failure
+        if: failure()
+        run: |
+          source .venv/bin/activate || true
+          lsb_release -a || cat /etc/os-release
+          python --version
+          pip --version
+          pip list --format=freeze
