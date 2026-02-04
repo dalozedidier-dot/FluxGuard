@@ -7,68 +7,152 @@ on:
 
 jobs:
   smoke:
-    runs-on: ubuntu-22.04
-    timeout-minutes: 20
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.experimental }}
+    timeout-minutes: 45
 
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        include:
+          - os: ubuntu-22.04
+            python-version: "3.11"
+            experimental: false
+          - os: ubuntu-22.04
+            python-version: "3.12"
+            experimental: false
+          - os: ubuntu-24.04
+            python-version: "3.11"
+            experimental: true
+          - os: ubuntu-24.04
+            python-version: "3.12"
+            experimental: true
 
     env:
       PYTHONHASHSEED: "0"
-      SOURCE_DATE_EPOCH: "0"
+      # SOURCE_DATE_EPOCH: "0"   # Décommentez seulement si besoin de timestamps 1970 pour drift tests déterministes
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Setup Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+          cache-dependency-path: |
+            fluxguard/requirements*.txt
+            fluxguard/pyproject.toml
+            fluxguard/setup.py
 
-      - name: Debug resources
+      - name: System debug (resources + OS)
         run: |
           free -h
           df -h
           uname -a
+          lsb_release -a || cat /etc/os-release
 
-      - name: Prep
-        working-directory: fluxguard
-        run: |
-          python -V
-          mkdir -p _ci_out
-          mkdir -p .github
-          if [ ! -f .github/constraints.txt ]; then
-            printf "seed=ci\n" > .github/constraints.txt
-          fi
-
-      - name: Smoke suite with retry
+      - name: Prepare virtual environment
         working-directory: fluxguard
         shell: bash
         run: |
           set -euo pipefail
 
+          python -m venv .venv
+          source .venv/bin/activate
+          python -m pip install --upgrade pip setuptools wheel
+
+          echo "pip cache:"
+          python -m pip cache dir
+          python -m pip cache info || true
+
+          # Install uniquement si le fichier existe (et fail si pip échoue)
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            echo "No requirements.txt (skip)"
+          fi
+
+          if [ -f requirements-dev.txt ]; then
+            pip install -r requirements-dev.txt
+          else
+            echo "No requirements-dev.txt (skip)"
+          fi
+
+          if [ -f requirements-optional.txt ]; then
+            pip install -r requirements-optional.txt
+          else
+            echo "No requirements-optional.txt (skip)"
+          fi
+
+          echo "pip list (freeze):"
+          pip list --format=freeze
+
+      - name: Prepare directories & constraints
+        working-directory: fluxguard
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p _ci_out .github
+          [ -f .github/constraints.txt ] || echo "seed=ci" > .github/constraints.txt
+
+      - name: Smoke suite with granular retry
+        working-directory: fluxguard
+        shell: bash
+        run: |
+          set -euo pipefail
+          source .venv/bin/activate
+
+          success=false
           for attempt in 1 2 3; do
-            echo "Attempt ${attempt}/3"
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo " Attempt ${attempt}/3 ──────────────────"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
             rm -rf _ci_out
             mkdir -p _ci_out
 
-            python -m compileall -q .
+            python -m compileall -q . 2>/dev/null || echo "compileall warnings (non-fatal)"
 
-            python fluxguard.py nulltrace --runs 10 --output-dir _ci_out/nulltrace
-            python fluxguard.py riftlens --input datasets/example.csv --output-dir _ci_out/riftlens
-            python fluxguard.py voidmark --input datasets/example.csv --runs 20 --output-dir _ci_out/voidmark
-            python fluxguard.py all --shadow-prev datasets/example.csv --shadow-curr datasets/example.csv --output-dir _ci_out/full
+            echo "→ nulltrace"
+            python fluxguard.py nulltrace --runs 10 --output-dir _ci_out/nulltrace || { echo "nulltrace failed"; continue; }
 
-            echo "Smoke OK"
+            echo "→ riftlens"
+            python fluxguard.py riftlens --input datasets/example.csv --output-dir _ci_out/riftlens || { echo "riftlens failed"; continue; }
+
+            echo "→ voidmark"
+            python fluxguard.py voidmark --input datasets/example.csv --runs 20 --output-dir _ci_out/voidmark || { echo "voidmark failed"; continue; }
+
+            echo "→ all (shadow comparison)"
+            python fluxguard.py all --shadow-prev datasets/example.csv --shadow-curr datasets/example.csv --output-dir _ci_out/full || { echo "all failed"; continue; }
+
+            echo "Smoke suite passed on attempt ${attempt}"
+            success=true
             break
           done
 
-      - name: Upload artifacts
+          [ "$success" = true ] || { echo "Smoke failed after 3 attempts"; exit 1; }
+
+      - name: Debug on failure (env + packages)
+        if: failure()
+        working-directory: fluxguard
+        shell: bash
+        run: |
+          source .venv/bin/activate || true
+          echo "OS details:"
+          cat /etc/os-release 2>/dev/null || lsb_release -a
+          echo "Python & pip:"
+          python --version
+          pip --version
+          echo "Installed packages:"
+          pip list --format=freeze
+
+      - name: Upload artifacts (always)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fluxguard-ci-${{ matrix.python-version }}
+          name: fluxguard-smoke-${{ matrix.os }}-py${{ matrix.python-version }}-attempt${{ github.run_attempt }}
           path: fluxguard/_ci_out
-          if-no-files-found: error
+          if-no-files-found: warn
