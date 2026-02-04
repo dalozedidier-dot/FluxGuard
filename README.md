@@ -1,31 +1,25 @@
-FluxGuard Audit Postprocess Bundle v2
+FluxGuard – High Performance CI Update (v1)
 
-But
-- Corriger les anomalies d'audit dans les artefacts FluxGuard, sans dépendre d'une modification précise du code interne.
-- Fixer generated_at_utc (plus de 1970) et propager une "seed effective" unique dans le summary.
-- Optionnel: quantifier les floats (par défaut 12 décimales) pour neutraliser les micro-écarts inter-OS/Python.
+Objectifs (PR CI)
+- Passer le job principal sur ubuntu-latest (Ubuntu 24.04), plus rapide une fois stabilisé.
+- Garder un garde-fou ubuntu-22.04 en continue-on-error (à supprimer après 20+ runs verts).
+- Virtualenv obligatoire + cache pip.
+- Réduire le scope smoke (nulltrace: 3 runs, voidmark: 5 runs).
+- Sous-échantillonnage déterministe du dataset example.csv (par défaut ~10%).
 
-Principe
-- On post-traite un dossier _ci_out (ou full/) après génération, puis on ré-écrit:
-  - fluxguard_summary.json (et éventuellement voidmark_mark.json si demandé)
+Contenu
+- .github/workflows/smoke-tests.yml
+  PR/Push: job principal ubuntu-latest (py 3.11/3.12) + garde-fou ubuntu-22.04 (py 3.12, continue-on-error)
+- .github/workflows/nightly-soak.yml
+  Nightly: soak plus long (voidmark runs=200) sur ubuntu-latest (py 3.12)
+- fluxguard/tools/make_smoke_sample.py
+  Génère datasets/example_smoke.csv à partir de datasets/example.csv (sampling déterministe)
 
-Scripts
-- scripts/fluxguard_postprocess_audit.py
-  Usage:
-    python scripts/fluxguard_postprocess_audit.py _ci_out/full
-    python scripts/fluxguard_postprocess_audit.py _ci_out/full --write-mark
-    python scripts/fluxguard_postprocess_audit.py _ci_out --recursive
+Application
+1) Copier les fichiers du ZIP dans le repo (respecter les chemins).
+2) Si vous avez déjà .github/workflows/blank.yml, renommez-le en smoke-tests.yml ou supprimez-le
+   si vous adoptez directement smoke-tests.yml.
+3) Ajuster la commande de tests si besoin (pytest vs fluxguard.py déjà en place).
 
-  Ce que ça fait:
-  - Remplace generated_at_utc par un vrai UTC ISO (sans microsecondes).
-  - Cherche voidmark_mark.json et récupère la seed.
-  - Injecte dans fluxguard_summary.json:
-      full_chain.voidmark.seed_effective = <seed lue dans mark>
-  - Optionnel: quantifie les floats du summary et du mark.
-
-Snippets
-- snippets/postprocess_step.yml : step GitHub Actions à insérer après la génération.
-
-Notes
-- Ce bundle n'essaie pas de recalculer des hashes "manifest" car FluxGuard ne semble pas les référencer
-  dans fluxguard_summary.json. Si vous avez un manifest externe, il faudra le mettre à jour après postprocess.
+Retrait du garde-fou 22.04
+- Quand ubuntu-latest est vert sur 20+ runs: supprimer le job "smoke-22" dans smoke-tests.yml.
