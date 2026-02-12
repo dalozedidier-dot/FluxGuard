@@ -1,5 +1,15 @@
-# Dependances optionnelles pour modes avances.
+# Dépendances optionnelles pour modes avancés.
+# FluxGuard fonctionne sans ces libs.
+#
+# Modules historiques (si vous les utilisez):
 ruptures
 tigramite
 great_expectations
 dvc
+#
+# vNext (décommentez si nécessaire):
+# scipy
+# pandas
+# pyarrow
+# matplotlib
+# watchdog

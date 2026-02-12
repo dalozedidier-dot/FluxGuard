@@ -5,7 +5,7 @@ import json
 import math
 import random
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 def sha256_bytes(b: bytes) -> str:
@@ -77,6 +77,7 @@ def voidmark_run_stress_test(
     noise: float,
     output_dir: Path,
     seed: int = 0,
+    plot: bool = False,
 ) -> Dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -115,7 +116,21 @@ def voidmark_run_stress_test(
         "runs": int(runs),
         "summary": summary,
     }
-    with open(vault_dir / "voidmark_mark.json", "w", encoding="utf-8") as f:
+    mark_path = vault_dir / "voidmark_mark.json"
+    with open(mark_path, "w", encoding="utf-8") as f:
         json.dump(mark, f, indent=2, ensure_ascii=False, sort_keys=True)
 
-    return {"mark": str(vault_dir / "voidmark_mark.json"), "summary": summary}
+    ret: Dict[str, Any] = {"mark": str(mark_path), "summary": summary}
+
+    if plot and entropies:
+        try:
+            from viz import save_histogram
+        except Exception:
+            save_histogram = None  # type: ignore
+
+        if save_histogram is not None:
+            p = save_histogram(entropies, output_dir / "voidmark_entropy_hist.png", title="VoidMark entropy histogram", xlabel="entropy_bits")
+            if p:
+                ret["plot_entropy_hist"] = p
+
+    return ret
