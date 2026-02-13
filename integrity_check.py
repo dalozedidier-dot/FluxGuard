@@ -6,13 +6,16 @@ But:
 - Transformer des résultats soak (NullTrace / VoidMark / drift stats) en un indicateur unique et auditable.
 - Rester lightweight (stdlib only). Certaines métriques utilisent des fallbacks quand SciPy/pandas ne sont pas présents.
 
-Score (toutes les composantes sont des "violations" >= 0):
-- v_null  : par défaut ratio failed_runs/runs (si dispo). Si min_score est disponible, on peut aussi
-            l'exploiter via --null-min-score (mode auto).
+Violations (toutes >= 0):
+- v_null  : dérivée d'un score NullTrace (au choix: p05 par défaut, ou min/mean/p50/p01, etc.).
+            La violation est normalisée: max(0, (target - score) / target).
+            Fallback possible: ratio failed_runs/runs si aucun score n'est dispo.
 - v_void  : max(0, (var_entropy_bits - void_var_limit) / void_var_limit)
-- v_drift : zmax = max_col abs(mean_curr - mean_base) / std_base (optionnel via baseline/current CSV)
+- v_drift : drift de moyennes (zmax = max_col abs(mean_curr-mean_base)/std_base) normalisé par un seuil:
+            max(0, (zmax - drift_z_limit) / drift_z_limit)
 
-incoherence_score = w_null*v_null + w_drift*v_drift + w_void*v_void
+Score:
+  incoherence_score = w_null*v_null + w_drift*v_drift + w_void*v_void
 
 Si incoherence_score > threshold:
 - écrit un rapport JSON (toujours)
@@ -26,6 +29,7 @@ Usage drift:
   python integrity_check.py --ci-out _ci_out --baseline-csv datasets/base.csv --current-csv datasets/curr.csv
 
 Notes:
+- Par défaut, on utilise p05 côté NullTrace: beaucoup plus stable que min_score (évite de bloquer sur un seul outlier).
 - Le script logge les composantes (v_null/v_drift/v_void) et les sources trouvées, même quand c'est OK.
 """
 
@@ -76,45 +80,39 @@ def _try_load_nulltrace_summary(ci_out: Path) -> Tuple[Optional[Dict[str, Any]],
     """Cherche un nulltrace_summary.json (ou variante future). Retourne (summary_dict, summary_path)."""
     candidates = [
         ci_out / "nulltrace" / "nulltrace_summary.json",
-        ci_out / "nulltrace" / "fluxguard_summary.json",  # futur éventuel
+        ci_out / "nulltrace" / "fluxguard_summary.json",
     ]
     for p in candidates:
-        if not p.exists():
-            continue
-        j = _read_json(p)
-        if "nulltrace" in j and isinstance(j["nulltrace"], dict):
-            return j["nulltrace"], p
-        return j, p
+        if p.exists():
+            j = _read_json(p)
+            # si fluxguard_summary.json: structure possible {"nulltrace": {...}}
+            if "nulltrace" in j and isinstance(j["nulltrace"], dict):
+                return j["nulltrace"], p
+            return j, p
     return None, None
 
 
 def _try_load_voidmark_summary(ci_out: Path) -> Tuple[Optional[Dict[str, Any]], Optional[Path]]:
-    """Cherche voidmark summary. Retourne (summary_dict, source_path)."""
+    """Retourne (voidmark_summary_dict, path)."""
     candidates = [
         ci_out / "voidmark" / "fluxguard_summary.json",
         ci_out / "voidmark" / "voidmark_summary.json",
-        ci_out / "voidmark" / "vault" / "voidmark_mark.json",
     ]
     for p in candidates:
-        if not p.exists():
-            continue
-        j = _read_json(p)
-        if p.name == "fluxguard_summary.json":
-            vm = j.get("voidmark")
-            if isinstance(vm, dict) and isinstance(vm.get("summary"), dict):
-                return vm["summary"], p
-        if p.name == "voidmark_mark.json":
-            if isinstance(j.get("summary"), dict):
-                return j["summary"], p
-        if isinstance(j.get("summary"), dict):
-            return j["summary"], p
-        if all(k in j for k in ("var_entropy_bits", "mean_entropy_bits")):
+        if p.exists():
+            j = _read_json(p)
+            if "voidmark" in j and isinstance(j["voidmark"], dict):
+                # {"voidmark": {"summary": {...}}}
+                vm = j["voidmark"]
+                if isinstance(vm.get("summary"), dict):
+                    return vm["summary"], p
+                return vm, p
             return j, p
     return None, None
 
 
 def _numeric_means_and_stds(csv_path: Path, max_rows: int = 200_000) -> Tuple[Dict[str, float], Dict[str, float]]:
-    """Profil ultra léger: moyenne et std sur colonnes numériques (fallback stdlib)."""
+    """Profil ultra léger: moyenne et std sur colonnes numériques (stdlib only)."""
     sums: Dict[str, float] = {}
     sums2: Dict[str, float] = {}
     counts: Dict[str, int] = {}
@@ -127,7 +125,7 @@ def _numeric_means_and_stds(csv_path: Path, max_rows: int = 200_000) -> Tuple[Di
             for k, v in row.items():
                 if v is None:
                     continue
-                s = str(v).strip()
+                s = v.strip()
                 if s == "":
                     continue
                 try:
@@ -157,7 +155,7 @@ def _drift_mean_zmax(baseline_csv: Path, current_csv: Path) -> float:
     base_means, base_stds = _numeric_means_and_stds(baseline_csv)
     curr_means, _ = _numeric_means_and_stds(current_csv)
 
-    zmax = 0.0
+    zs = []
     for col, mu_base in base_means.items():
         if col not in curr_means:
             continue
@@ -166,17 +164,17 @@ def _drift_mean_zmax(baseline_csv: Path, current_csv: Path) -> float:
             continue
         z = abs(curr_means[col] - mu_base) / sd
         if math.isfinite(z):
-            zmax = max(zmax, z)
+            zs.append(z)
 
-    return zmax
+    return max(zs) if zs else 0.0
 
 
-def _post_json(url: str, payload: Dict[str, Any], timeout_s: int = 8) -> Tuple[bool, str]:
+def _post_json(url: str, payload: Dict[str, Any]) -> Tuple[bool, str]:
     try:
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
-            return True, f"HTTP {resp.status}"
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return True, f"http {resp.status}"
     except Exception as e:
         return False, str(e)
 
@@ -209,21 +207,54 @@ def _send_email(
         return False, str(e)
 
 
+def _pick_null_score(null: Dict[str, Any], mode: str) -> Tuple[Optional[float], str]:
+    """Retourne (score, mode_effectif)."""
+    # normaliser des alias
+    aliases = {
+        "mean": "mean_score",
+        "median": "p50",
+        "p10": "p05",  # si l'utilisateur pense p10, p05 est le plus proche dispo
+    }
+    mode = aliases.get(mode, mode)
+
+    # auto: préférer p05, sinon mean_score, sinon p50, sinon min_score
+    if mode == "auto":
+        for key in ("p05", "mean_score", "p50", "min_score"):
+            v = null.get(key)
+            if v is not None:
+                return _coerce_float(v, default=float("nan")), key
+        return None, "failed_ratio"
+
+    if mode == "failed_ratio":
+        return None, "failed_ratio"
+
+    v = null.get(mode)
+    if v is None:
+        # fallback: min_score si présent, sinon rien
+        if null.get("min_score") is not None:
+            return _coerce_float(null.get("min_score"), default=float("nan")), "min_score"
+        return None, "failed_ratio"
+
+    return _coerce_float(v, default=float("nan")), mode
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="FluxGuard integrity check: score unique d'incohérence")
+
     ap.add_argument("--ci-out", type=Path, default=Path("_ci_out"))
     ap.add_argument("--threshold", type=float, default=0.25)
 
     ap.add_argument("--weights", type=str, default="0.3,0.4,0.3", help="w_null,w_drift,w_void")
 
     # NullTrace
-    ap.add_argument("--null-min-score", type=float, default=0.10, help="cible min_score si dispo")
+    ap.add_argument("--null-target", "--null-min-score", dest="null_target", type=float, default=0.10,
+                    help="cible score NullTrace (comparée à p05/mean/min selon --null-mode)")
     ap.add_argument(
         "--null-mode",
         type=str,
-        default="auto",
-        choices=["auto", "failed_ratio", "min_score"],
-        help="auto=utilise min_score si présent sinon failed_ratio",
+        default="p05",
+        choices=["p05", "p01", "p50", "mean_score", "min_score", "failed_ratio", "auto"],
+        help="score NullTrace à utiliser. p05 est stable. auto=préfère p05 si dispo.",
     )
 
     # VoidMark
@@ -232,6 +263,7 @@ def main() -> None:
     # Drift (optionnel)
     ap.add_argument("--baseline-csv", type=Path, default=None)
     ap.add_argument("--current-csv", type=Path, default=None)
+    ap.add_argument("--drift-z-limit", type=float, default=3.0, help="seuil z (en sigma) au-delà duquel drift > 0")
 
     # Alerting optionnel
     ap.add_argument("--slack-webhook", type=str, default=None)
@@ -252,7 +284,6 @@ def main() -> None:
     )
 
     args = ap.parse_args()
-
     ci_out: Path = args.ci_out
 
     null, null_path = _try_load_nulltrace_summary(ci_out)
@@ -265,29 +296,30 @@ def main() -> None:
     if null:
         runs = _coerce_int(null.get("runs"), 0)
         failed_runs = _coerce_int(null.get("failed_runs"), 0)
-        min_score = _coerce_float(null.get("min_score"), default=float("nan"))
 
+        score, eff_mode = _pick_null_score(null, args.null_mode)
         null_details.update(
             {
                 "runs": runs,
                 "failed_runs": failed_runs,
-                "min_score": None if math.isnan(min_score) else min_score,
-                "target_min_score": float(args.null_min_score),
+                "null_mode": eff_mode,
+                "target": float(args.null_target),
+                "score": None if (score is None or (isinstance(score, float) and math.isnan(score))) else float(score),
             }
         )
 
-        mode = args.null_mode
-        if mode == "auto":
-            mode = "min_score" if (not math.isnan(min_score)) else "failed_ratio"
-
-        if mode == "min_score" and not math.isnan(min_score):
-            # violation relative: 0 si min_score >= target
-            v_null = max(0.0, _safe_div(args.null_min_score - min_score, args.null_min_score))
-            null_details["null_mode"] = "min_score"
-        else:
+        if eff_mode == "failed_ratio" or score is None or (isinstance(score, float) and math.isnan(score)):
             # fallback: ratio échecs
             v_null = _safe_div(float(failed_runs), float(runs)) if runs > 0 else 0.0
-            null_details["null_mode"] = "failed_ratio"
+            null_details["computed_from"] = "failed_runs/runs"
+        else:
+            v_null = max(0.0, _safe_div(float(args.null_target) - float(score), float(args.null_target)))
+            null_details["computed_from"] = eff_mode
+
+        # ajouter quelques champs utiles si présents
+        for k in ("min_score", "mean_score", "p01", "p05", "p50", "max_score"):
+            if k in null:
+                null_details[k] = _coerce_float(null.get(k), default=float("nan"))
 
     else:
         null_details["error"] = "nulltrace summary not found"
@@ -312,17 +344,19 @@ def main() -> None:
     drift_details: Dict[str, Any] = {}
     if args.baseline_csv and args.current_csv and args.baseline_csv.exists() and args.current_csv.exists():
         zmax = _drift_mean_zmax(args.baseline_csv, args.current_csv)
-        v_drift = max(0.0, zmax)
+        v_drift = max(0.0, _safe_div(zmax - float(args.drift_z_limit), float(args.drift_z_limit)))
         drift_details = {
             "baseline_csv": str(args.baseline_csv),
             "current_csv": str(args.current_csv),
             "zmax_mean_shift": zmax,
+            "drift_z_limit": float(args.drift_z_limit),
         }
     else:
         drift_details = {
             "note": "no baseline/current csv provided or files missing, drift set to 0",
             "baseline_csv": str(args.baseline_csv) if args.baseline_csv else None,
             "current_csv": str(args.current_csv) if args.current_csv else None,
+            "drift_z_limit": float(args.drift_z_limit),
         }
 
     # weights
@@ -352,22 +386,28 @@ def main() -> None:
     print("FluxGuard integrity check")
     print(f"  weights: w_null={w_null:.3f} w_drift={w_drift:.3f} w_void={w_void:.3f}")
     print("  components:")
-    print(f"    nulltrace: source={null_details.get('source')} mode={null_details.get('null_mode')} "
-          f"runs={null_details.get('runs')} failed_runs={null_details.get('failed_runs')} "
-          f"min_score={null_details.get('min_score')} -> v_null={v_null:.6f}")
-    print(f"    voidmark : source={void_details.get('source')} var_entropy_bits={void_details.get('var_entropy_bits')} "
-          f"limit={void_details.get('limit_var_entropy_bits')} -> v_void={v_void:.6f}")
-    print(f"    drift    : baseline={drift_details.get('baseline_csv')} current={drift_details.get('current_csv')} "
-          f"zmax={drift_details.get('zmax_mean_shift', 0.0)} -> v_drift={v_drift:.6f}")
+    print(
+        f"    nulltrace: source={null_details.get('source')} mode={null_details.get('null_mode')} "
+        f"runs={null_details.get('runs')} failed_runs={null_details.get('failed_runs')} "
+        f"score={null_details.get('score')} target={args.null_target} -> v_null={v_null:.6f}"
+    )
+    print(
+        f"    voidmark : source={void_details.get('source')} var_entropy_bits={void_details.get('var_entropy_bits')} "
+        f"limit={void_details.get('limit_var_entropy_bits')} -> v_void={v_void:.6f}"
+    )
+    print(
+        f"    drift    : baseline={drift_details.get('baseline_csv')} current={drift_details.get('current_csv')} "
+        f"zmax={drift_details.get('zmax_mean_shift', 0.0)} z_limit={drift_details.get('drift_z_limit')} -> v_drift={v_drift:.6f}"
+    )
     print(f"  incoherence_score: {inco:.6f} (threshold={args.threshold:.6f}) -> {payload['decision']}")
     print(f"  report: {out_path}")
 
     # ---- Alerting only on BLOCK ----
     if inco > float(args.threshold):
         summary_text = (
-            f"FluxGuard BLOCK: incoherence_score={inco:.6f} threshold={args.threshold:.6f}\n"
-            f"v_null={v_null:.6f} v_drift={v_drift:.6f} v_void={v_void:.6f}\n"
-            f"nulltrace_source={null_details.get('source')} voidmark_source={void_details.get('source')}\n"
+            f"FluxGuard BLOCK: incoherence_score={inco:.6f} threshold={args.threshold:.6f}\\n"
+            f"v_null={v_null:.6f} v_drift={v_drift:.6f} v_void={v_void:.6f}\\n"
+            f"nulltrace_source={null_details.get('source')} voidmark_source={void_details.get('source')}\\n"
         )
 
         alert_msgs = []
@@ -394,7 +434,6 @@ def main() -> None:
             alert_msgs.append({"type": "email", "ok": ok, "detail": msg})
 
         if alert_msgs:
-            # best-effort log
             for a in alert_msgs:
                 print(f"  alert: {a['type']} ok={a['ok']} detail={a['detail']}", file=sys.stderr)
 

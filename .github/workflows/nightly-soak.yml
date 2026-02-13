@@ -67,7 +67,7 @@ jobs:
         run: |
           set -euo pipefail
           source .venv/bin/activate
-          python integrity_check.py --ci-out _ci_out --threshold 0.25 --baseline-csv datasets/example.csv --current-csv datasets/example.csv
+          python integrity_check.py --ci-out _ci_out --threshold 0.25 --null-mode p05 --null-target 0.10 --drift-z-limit 3.0 --baseline-csv datasets/example.csv --current-csv datasets/example.csv
 
       - name: Upload soak artifacts
         if: always()
