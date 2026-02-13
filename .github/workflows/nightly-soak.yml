@@ -61,6 +61,14 @@ jobs:
           python fluxguard.py voidmark  --input datasets/example.csv --runs 200 --output-dir _ci_out/voidmark
           python fluxguard.py all       --shadow-prev datasets/example.csv --shadow-curr datasets/example.csv --output-dir _ci_out/full
 
+      - name: Integrity check (incoherence score)
+        working-directory: fluxguard
+        shell: bash
+        run: |
+          set -euo pipefail
+          source .venv/bin/activate
+          python integrity_check.py --ci-out _ci_out --threshold 0.25 --baseline-csv datasets/example.csv --current-csv datasets/example.csv
+
       - name: Upload soak artifacts
         uses: actions/upload-artifact@v4
         with:
